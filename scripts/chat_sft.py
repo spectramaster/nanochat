@@ -17,10 +17,10 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
+from nanochat.utils import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
 from nanochat.checkpoint_manager import load_model
 from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.engine import Engine
+from nanochat.runtime.engine import Engine
 from scripts.chat_eval import run_chat_eval
 
 from tasks.common import TaskMixture, TaskSequence
@@ -53,9 +53,13 @@ init_lr_frac = 0.02
 eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
-# now allow CLI to override the settings via the configurator lol
+# now allow CLI to override the settings via structured configuration
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+from nanochat.configs.loader import load_runtime_config
+
+defaults = {k: globals()[k] for k in config_keys}
+overrides = load_runtime_config(defaults=defaults)
+globals().update(overrides)
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 

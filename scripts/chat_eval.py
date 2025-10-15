@@ -14,9 +14,9 @@ from functools import partial
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0
+from nanochat.utils import compute_init, compute_cleanup, get_dist_info, print0
 from nanochat.checkpoint_manager import load_model
-from nanochat.engine import Engine
+from nanochat.runtime.engine import Engine
 
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU

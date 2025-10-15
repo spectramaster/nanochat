@@ -16,11 +16,10 @@ import time
 import wandb
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
-from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.checkpoint_manager import load_model
+from nanochat.utils import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
+from nanochat.data.tokenizer import get_token_bytes
+from nanochat.checkpoint_manager import save_checkpoint, load_model
+from nanochat.core.loss_eval import evaluate_bpb
 import torch.distributed as dist
 
 from tasks.common import TaskMixture
@@ -45,7 +44,11 @@ eval_every = 150
 eval_tokens = 20*524288
 total_batch_size = 524288
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+from nanochat.configs.loader import load_runtime_config
+
+defaults = {k: globals()[k] for k in config_keys}
+overrides = load_runtime_config(defaults=defaults)
+globals().update(overrides)
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
@@ -57,7 +60,11 @@ autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-mid", name=run, config=user_config)
+wandb_run = (
+    DummyWandb()
+    if use_dummy_wandb
+    else wandb.init(project="nanochat-mid", name=run, config=user_config)
+)
 
 # Load the model and tokenizer
 model, tokenizer, meta = load_model("base", device, phase="train", model_tag=model_tag, step=step)
@@ -272,7 +279,7 @@ print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
-from nanochat.report import get_report
+from nanochat.interfaces.report import get_report
 get_report().log(section="Midtraining", data=[
     user_config, # CLI args
     { # stats about the training setup

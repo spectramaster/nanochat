@@ -8,10 +8,9 @@ import json
 import logging
 import torch
 
-from nanochat.common import get_base_dir
-from nanochat.gpt import GPT, GPTConfig
-from nanochat.tokenizer import get_tokenizer
-from nanochat.common import setup_default_logging
+from nanochat.utils import get_base_dir, setup_default_logging
+from nanochat.core.gpt import GPT, GPTConfig
+from nanochat.data.tokenizer import load_tokenizer
 
 # Set up logging
 setup_default_logging()
@@ -82,7 +81,7 @@ def build_model(checkpoint_dir, step, device, phase):
     else:
         model.train()
     # Load the Tokenizer
-    tokenizer = get_tokenizer()
+    tokenizer = load_tokenizer()
     # Sanity check: compatibility between model and tokenizer
     assert tokenizer.get_vocab_size() == model_config_kwargs["vocab_size"]
     return model, tokenizer, meta_data

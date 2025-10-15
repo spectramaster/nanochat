@@ -9,6 +9,7 @@ Two implementations are available:
 import os
 import copy
 from functools import lru_cache
+from typing import Iterable, List
 
 SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
@@ -35,6 +36,8 @@ from tokenizers import Tokenizer as HFTokenizer
 from tokenizers import pre_tokenizers, decoders, Regex
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
+
+from nanochat.utils import get_base_dir
 
 class HuggingFaceTokenizer:
     """Light wrapper around HuggingFace Tokenizer for some utilities"""
@@ -376,20 +379,26 @@ class RustBPETokenizer:
 # -----------------------------------------------------------------------------
 # nanochat-specific convenience functions
 
-def get_tokenizer():
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
-    # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
+def load_tokenizer(base_dir: str | None = None) -> RustBPETokenizer:
+    """Load the persisted tokenizer from disk."""
+
+    resolved_base = base_dir or get_base_dir()
+    tokenizer_dir = os.path.join(resolved_base, "tokenizer")
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
-def get_token_bytes(device="cpu"):
+
+def get_token_bytes(device: str = "cpu", base_dir: str | None = None):
+    """Load the cached token byte tensor used by the Rust BPE bindings."""
+
     import torch
-    from nanochat.common import get_base_dir
-    base_dir = get_base_dir()
-    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+
+    resolved_base = base_dir or get_base_dir()
+    tokenizer_dir = os.path.join(resolved_base, "tokenizer")
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
-    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
-    with open(token_bytes_path, "rb") as f:
-        token_bytes = torch.load(f, map_location=device)
+    if not os.path.exists(token_bytes_path):
+        raise FileNotFoundError(
+            f"Token bytes not found at {token_bytes_path}. Run tok_train.py first."
+        )
+    with open(token_bytes_path, "rb") as file_handle:
+        token_bytes = torch.load(file_handle, map_location=device)
     return token_bytes

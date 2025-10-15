@@ -1,31 +1,32 @@
-"""
-Engine for efficient inference of our models.
+"""Engine for efficient inference of our models."""
 
-Everything works around token sequences:
-- The user can send token sequences to the engine
-- The engine returns the next token
-
-Notes:
-- The engine knows nothing about tokenization, it's purely token id sequences.
-
-The whole thing is made as efficient as possible.
-"""
+import logging
+import time
+import signal
+import warnings
+from collections import deque
+from contextlib import contextmanager
 
 import torch
 import torch.nn.functional as F
-import signal
-import warnings
-from contextlib import contextmanager
-from collections import deque
-from nanochat.common import compute_init
+
+from nanochat.utils import compute_init
 from nanochat.checkpoint_manager import load_model
+from nanochat.runtime.errors import (
+    EngineInitializationError,
+    InferenceTimeout,
+    InvalidRequest,
+)
+from nanochat.runtime.monitoring import DEFAULT_MONITOR, MetricEvent, RuntimeMonitor
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
 @contextmanager
 def timeout(duration, formula):
     def timeout_handler(signum, frame):
-        raise Exception(f"'{formula}': timed out after {duration} seconds")
+        raise InferenceTimeout(f"'{formula}': timed out after {duration} seconds")
 
     signal.signal(signal.SIGALRM, timeout_handler)
     signal.alarm(duration)
@@ -156,13 +157,16 @@ class RowState:
 
 class Engine:
 
-    def __init__(self, model, tokenizer):
+    def __init__(self, model, tokenizer, monitor: RuntimeMonitor | None = None):
+        if not hasattr(model, "forward"):
+            raise EngineInitializationError("Model must implement a forward method")
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
+        self.monitor = monitor or DEFAULT_MONITOR
 
     @torch.inference_mode()
-    def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
-        """Same as generate, but does single prefill and then clones the KV cache."""
+    def _generate_stream(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
+        """Original streaming generator implementation."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
         device = self.model.get_device()
         rng = torch.Generator(device=device)
@@ -265,6 +269,40 @@ class Engine:
             num_generated += 1
             # Prepare ids for next iteration
             ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
+
+    def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
+        """Stream generation with monitoring and input validation."""
+        if not isinstance(tokens, list) or (tokens and not isinstance(tokens[0], int)):
+            raise InvalidRequest("tokens must be a list of integers")
+        start_time = time.time()
+        try:
+            for column in self._generate_stream(
+                tokens,
+                num_samples=num_samples,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                seed=seed,
+            ):
+                yield column
+        except InferenceTimeout as err:
+            self.monitor.log_exception(err, {"phase": "generate"})
+            raise
+        except Exception as err:  # pragma: no cover - runtime errors depend on model state
+            self.monitor.log_exception(err, {"phase": "generate"})
+            raise
+        finally:
+            duration = time.time() - start_time
+            self.monitor.log_metric(
+                MetricEvent(
+                    name="engine.generate.latency_s",
+                    value=duration,
+                    metadata={
+                        "num_samples": num_samples,
+                        "max_tokens": max_tokens,
+                    },
+                )
+            )
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
