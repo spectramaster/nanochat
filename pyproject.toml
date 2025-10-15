@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.8.0",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
+    "pyyaml>=6.0.0",
 ]
 
 [build-system]
@@ -43,6 +44,8 @@ manifest-path = "rustbpe/Cargo.toml"
 dev = [
     "maturin>=1.9.4",
     "pytest>=8.0.0",
+    "ruff>=0.6.9",
+    "mypy>=1.11.0",
 ]
 
 [tool.pytest.ini_options]
@@ -53,3 +56,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

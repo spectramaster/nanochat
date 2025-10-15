@@ -6,8 +6,8 @@ python -m scripts.chat_cli -i mid
 """
 import argparse
 import torch
-from nanochat.common import compute_init
-from nanochat.engine import Engine
+from nanochat.utils import compute_init
+from nanochat.runtime.engine import Engine
 from nanochat.checkpoint_manager import load_model
 
 parser = argparse.ArgumentParser(description='Chat with the model')

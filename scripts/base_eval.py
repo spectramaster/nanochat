@@ -19,8 +19,8 @@ import yaml
 import pandas as pd
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir
-from nanochat.tokenizer import HuggingFaceTokenizer
+from nanochat.utils import compute_init, compute_cleanup, print0, get_base_dir
+from nanochat.data.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
 

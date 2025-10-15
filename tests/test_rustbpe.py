@@ -18,12 +18,17 @@ python -m pytest tests/test_rustbpe.py -v -s
 -v is verbose, -s is show prints
 """
 
+import pytest
+
+pytest.importorskip("regex", reason="requires optional regex dependency for GPT-4 split pattern")
+pytest.importorskip("rustbpe", reason="requires rustbpe tokenizer wheel")
+pytest.importorskip("tiktoken", reason="requires tiktoken package")
+
 import regex as re
 from collections import Counter, defaultdict
 import time
 import rustbpe
 import tiktoken
-import pytest
 
 GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
@@ -430,7 +435,7 @@ def enwik8_path():
     """Fixture to download and cache enwik8 dataset."""
     import os
     import zipfile
-    from nanochat.common import get_base_dir
+    from nanochat.utils import get_base_dir
     base_dir = get_base_dir()
     # download and unzip enwik8 to .cache directory
     enwik8_url = "https://mattmahoney.net/dc/enwik8.zip"

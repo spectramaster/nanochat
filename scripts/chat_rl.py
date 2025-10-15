@@ -23,9 +23,9 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
+from nanochat.utils import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
 from nanochat.checkpoint_manager import save_checkpoint, load_model
-from nanochat.engine import Engine
+from nanochat.runtime.engine import Engine
 from tasks.gsm8k import GSM8K
 
 # RL hyperparameters
@@ -47,9 +47,13 @@ num_epochs = 1 # how many epochs of gsm8k to train on
 save_every = 60 # every how many steps to save the model
 eval_every = 60 # every how many steps to evaluate the model for val pass@k
 eval_examples = 400 # number of examples used for evaluating pass@k
-# now allow CLI to override the settings via the configurator lol
+# now allow CLI to override the settings via structured configuration
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+from nanochat.configs.loader import load_runtime_config
+
+defaults = {k: globals()[k] for k in config_keys}
+overrides = load_runtime_config(defaults=defaults)
+globals().update(overrides)
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 

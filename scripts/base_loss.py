@@ -9,18 +9,25 @@ torchrun --standalone --nproc_per_node=8 -m scripts.base_loss
 import os
 import torch
 from nanochat.checkpoint_manager import load_model
-from nanochat.common import compute_init, print0, compute_cleanup
-from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.tokenizer import get_token_bytes
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.engine import Engine
+from nanochat.utils import compute_init, compute_cleanup, print0
+from nanochat.data.dataloader import tokenizing_distributed_data_loader
+from nanochat.data.tokenizer import get_token_bytes
+from nanochat.core.loss_eval import evaluate_bpb
+from nanochat.runtime.engine import Engine
 
 # Configuration
 device_batch_size = 32
 split_tokens = 20*524288  # number of tokens to evaluate per split
 model_tag = None # optional model tag for the output directory name
 model_step = None # optional model step for the output directory name
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
+config_keys = [
+    k for k, v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))
+]
+from nanochat.configs.loader import load_runtime_config
+
+defaults = {k: globals()[k] for k in config_keys}
+overrides = load_runtime_config(defaults=defaults)
+globals().update(overrides)
 
 # Load the base model and the tokenizer
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
@@ -37,7 +44,12 @@ steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name)
+    loader = tokenizing_distributed_data_loader(
+        device_batch_size,
+        sequence_len,
+        split_name,
+        tokenizer_factory=lambda: tokenizer,
+    )
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")

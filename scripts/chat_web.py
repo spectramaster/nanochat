@@ -16,9 +16,9 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, AsyncGenerator
 
-from nanochat.common import compute_init
+from nanochat.utils import compute_init
 from nanochat.checkpoint_manager import load_model
-from nanochat.engine import Engine
+from nanochat.runtime.engine import Engine
 
 parser = argparse.ArgumentParser(description='NanoChat Web Server')
 parser.add_argument('-i', '--source', type=str, default="sft", help="Source of the model: sft|mid|rl")

@@ -10,50 +10,58 @@ torchrun --nproc_per_node=8 base_train.py
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+from dataclasses import asdict
 import time
 import wandb
 import torch
 
-from nanochat.gpt import GPT, GPTConfig
-from nanochat.dataloader import tokenizing_distributed_data_loader
-from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
-from nanochat.tokenizer import get_tokenizer, get_token_bytes
+from nanochat.core.gpt import GPT, GPTConfig
+from nanochat.data.dataloader import tokenizing_distributed_data_loader
+from nanochat.utils import (
+    DummyWandb,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    print0,
+    print_banner,
+)
+from nanochat.data.tokenizer import load_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint
-from nanochat.loss_eval import evaluate_bpb
-from nanochat.engine import Engine
+from nanochat.core.loss_eval import evaluate_bpb
+from nanochat.runtime.engine import Engine
 from scripts.base_eval import evaluate_model
+from nanochat.configs.loader import load_runtime_config
+from nanochat.configs.runtime import BaseTrainConfig
 print_banner()
 
 # -----------------------------------------------------------------------------
-# User settings
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
-# Model architecture
-depth = 20 # the depth of the Transformer model to train, rest of the kwargs are derived
-max_seq_len = 2048 # max context length
-# Training horizon. Only one of these 3 will be used, in this order of precedence.
-num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
-target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
-target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
-# Optimization
-device_batch_size = 32 # per-device batch size (set to not OOM)
-total_batch_size = 524288 # total desired batch size, in #tokens
-embedding_lr = 0.2 # learning rate for the embedding parameters (Adam)
-unembedding_lr = 0.004 # learning rate for the unembedding parameters (Adam)
-weight_decay = 0.0 # weight decay for the embedding/unembedding parameters (Adam)
-matrix_lr = 0.02 # learning rate for the matrix parameters (Muon)
-grad_clip = 1.0 # gradient clipping value (0.0 = disabled)
-# Evaluation
-eval_every = 250 # every how many steps to evaluate the model for val bpb
-eval_tokens = 20*524288 # number of tokens to evaluate val loss on
-core_metric_every = 2000 # every how many steps to evaluate the core metric
-core_metric_max_per_task = 500 # examples per task in estimating the core metric
-sample_every = 2000 # every how many steps to sample from the model
-# Output
-model_tag = "" # optionally override the model tag for the output checkpoint directory name
-# now allow CLI to override the settings via the configurator lol
-config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
-exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
-user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
+# User settings loaded through structured configuration
+cfg = load_runtime_config(defaults=BaseTrainConfig())
+user_config = asdict(cfg)
+
+run = cfg.run
+depth = cfg.depth
+max_seq_len = cfg.max_seq_len
+num_iterations = cfg.num_iterations
+target_flops = cfg.target_flops
+target_param_data_ratio = cfg.target_param_data_ratio
+device_batch_size = cfg.device_batch_size
+total_batch_size = cfg.total_batch_size
+embedding_lr = cfg.embedding_lr
+unembedding_lr = cfg.unembedding_lr
+weight_decay = cfg.weight_decay
+matrix_lr = cfg.matrix_lr
+grad_clip = cfg.grad_clip
+eval_every = cfg.eval_every
+eval_tokens = cfg.eval_tokens
+core_metric_every = cfg.core_metric_every
+core_metric_max_per_task = cfg.core_metric_max_per_task
+sample_every = cfg.sample_every
+model_tag = cfg.model_tag
+warmup_ratio = cfg.warmup_ratio
+warmdown_ratio = cfg.warmdown_ratio
+final_lr_frac = cfg.final_lr_frac
 # -----------------------------------------------------------------------------
 
 # Compute init
@@ -66,7 +74,7 @@ use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
 
 # Tokenizer will be useful for evaluation, also we need the vocab size
-tokenizer = get_tokenizer()
+tokenizer = load_tokenizer()
 token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Vocab size: {vocab_size:,}")
@@ -133,8 +141,18 @@ adamw_optimizer, muon_optimizer = optimizers
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val")
+train_loader = tokenizing_distributed_data_loader(
+    device_batch_size,
+    max_seq_len,
+    split="train",
+    tokenizer_factory=lambda: tokenizer,
+)
+build_val_loader = lambda: tokenizing_distributed_data_loader(
+    device_batch_size,
+    max_seq_len,
+    split="val",
+    tokenizer_factory=lambda: tokenizer,
+)
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -142,9 +160,6 @@ x, y = next(train_loader) # kick off load of the very first batch of data
 
 # Learning rate scheduler
 # TODO: experiment with a short warmup for the AdamW params (expecting slight improvement)
-warmup_ratio = 0.0 # ratio of iterations for LR warmup
-warmdown_ratio = 0.2 # ratio of iterations for LR warmdown
-final_lr_frac = 0.0 # final LR is this fraction of the initial LR
 def get_lr_multiplier(it):
     warmup_iters = round(warmup_ratio * num_iterations)
     warmdown_iters = round(warmdown_ratio * num_iterations)
